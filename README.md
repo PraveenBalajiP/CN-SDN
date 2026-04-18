@@ -1,165 +1,57 @@
 # ARP Handling in SDN Networks
 
-**Course:** SDN Mininet Simulation Project 
-**Controller:** POX (OpenFlow 1.0)  
-**Author:** Praveen Balaji P  
+A lightweight SDN-based ARP management system built using **POX** and **Mininet**,
+featuring a centralised controller that intercepts, learns, and responds to ARP
+packets — eliminating unnecessary broadcast floods through Proxy ARP.
+
+This project is built entirely from scratch **without any high-level network
+abstraction library** — it directly uses OpenFlow 1.0 primitives like `packet_in`
+events, `ofp_flow_mod`, `ofp_packet_out`, and UNIX socket-based controller
+communication to implement ARP interception, host discovery, and traffic forwarding.
 
 ---
 
-## About the Project
+## 📌 Overview
 
-In a traditional network, every host resolves IP-to-MAC addresses using ARP
-(Address Resolution Protocol) broadcasts. These broadcasts flood the entire
-network and waste bandwidth.
+This project implements ARP handling in an SDN environment that allows the controller to:
 
-In an **SDN (Software Defined Network)**, the controller has complete
-visibility of the network topology. This project uses a **POX SDN controller**
-to intercept every ARP packet, build a centralised ARP table, and answer
-future ARP requests directly — eliminating unnecessary floods.
+- Intercept every ARP packet before the switch processes it
+- Learn the IP → MAC → port mapping of every host automatically
+- Answer ARP Requests directly from the controller (Proxy ARP) without flooding
+- Forward ARP Replies to the correct host port
+- Install proactive OpenFlow flow rules for IP traffic after ARP resolves
 
-### What this project demonstrates
+The system is split into two major components:
 
-| Feature | Description |
+**POX Controller (`arp_handler.py`)** — A long-running SDN controller that handles
+all ARP logic, builds an ARP table, generates synthetic ARP replies, and installs
+flow rules into the switch.
+
+**Mininet Topology (`topology.py`)** — A virtual network emulator that creates
+4 hosts connected to a single OVS switch, with configurable link bandwidth and
+delay, connected to the POX controller over OpenFlow 1.0.
+
+These two components communicate via **OpenFlow 1.0** over TCP port **6633**.
+
+---
+
+## ⚙️ Requirements
+
+| Requirement | Details |
 |---|---|
-| **Intercept ARP Packets** | Every ARP packet is sent to the controller via `packet_in` events |
-| **Generate ARP Responses** | Controller crafts synthetic ARP Replies (Proxy ARP) when the target is known |
-| **Enable Host Discovery** | Controller builds an ARP table `IP → (MAC, switch, port)` from every packet seen |
-| **Validate Communication** | `ping`, `pingall`, `iperf`, `ovs-ofctl dump-flows` confirm correct behaviour |
-| **Install Flow Rules** | After ARP resolves, OpenFlow rules push IP forwarding into the switch data plane |
+| OS | Ubuntu 20.04 or Ubuntu 22.04 LTS (VM is fine) |
+| Python | 3.6 – 3.12 (3.8 recommended for best POX compatibility) |
+| Mininet | 2.3.0 or higher |
+| Open vSwitch | 2.13 or higher |
+| POX Controller | 0.7.0 (gar) |
+| iperf | Version 2.x |
+| Wireshark / tshark | Any recent version |
 
 ---
-
-## Architecture
-
-### Step-by-step flow for a first ping from h1 to h2
-
-```
-h1                    OVS Switch (s1)              POX Controller
-|                          |                              |
-|-- ARP Request ---------->|                              |
-|   "Who has 10.0.0.2?"    |-- packet_in ---------------->|
-|                          |                   [ARP LEARN] 10.0.0.1 → port 1
-|                          |                   [ARP FLOOD] 10.0.0.2 unknown
-|                          |<-- OFPP_FLOOD ---|
-|                          |-- flood -------->h2,h3,h4
-|                          |
-|                    h2 sends ARP Reply
-|                          |-- packet_in ---------------->|
-|                          |                   [ARP LEARN] 10.0.0.2 → port 2
-|                          |                   [ARP FWD]   forward reply → port 1
-|                          |<-- packet_out port 1 --------|
-|<-- ARP Reply ------------|
-|   "10.0.0.2 is at 00:02" |
-|                          |
-|-- ICMP ping ------------>|-- packet_in ---------------->|
-|                          |                   [IP FWD] install flow rule
-|                          |<-- flow_mod dl_dst=00:02 ----|
-|                          |-- ICMP ping ---------------->h2
-```
-
-### Step-by-step flow for a second ping (Proxy ARP — no flood)
-
-```
-h1                    OVS Switch (s1)              POX Controller
-|                          |                              |
-|-- ARP Request ---------->|                              |
-|   "Who has 10.0.0.2?"    |-- packet_in ---------------->|
-|                          |                   [PROXY ARP] table hit!
-|                          |                   10.0.0.2 is at 00:02
-|                          |<-- packet_out (ARP Reply) ---|
-|<-- ARP Reply ------------|
-|   No flood. No broadcast.|
-```
-
----
-
-### Network Topology
-
-```
-    h1  (10.0.0.1 / 00:00:00:00:00:01) ── port 1 ──┐
-    h2  (10.0.0.2 / 00:00:00:00:00:02) ── port 2 ──┤
-                                                    S1 ── POX Controller
-    h3  (10.0.0.3 / 00:00:00:00:00:03) ── port 3 ──┤     127.0.0.1:6633
-    h4  (10.0.0.4 / 00:00:00:00:00:04) ── port 4 ──┘
-
-    Link speed : 10 Mbps
-    Link delay : 5 ms
-    Packet loss: 0%
-```
-
----
-
-## Directory Structure
-
-```
-CN-SDN/
-│
-├── controller/
-│   └── arp_handler.py          ← POX SDN controller (all ARP + forwarding logic)
-├── topology/
-│   └── topology.py             ← Mininet topology builder + automated test runner
-├── tests/
-│   └── test_arp_handler.py     ← 10 unit/regression tests (no Mininet required)
-├── requirements.txt            ← Dependency list with install instructions
-└── README.md                   ← This file
-```
-
-### File descriptions
-
-**`controller/arp_handler.py`**  
-The main POX controller component. Contains the `ARPHandler` class with:
-- `_handle_ConnectionUp` — installs table-miss rule when switch connects
-- `_handle_PacketIn` — dispatches every packet by EtherType
-- `_handle_arp` — ARP Request/Reply logic, proxy ARP, flooding
-- `_send_arp_reply` — crafts synthetic ARP Reply packets
-- `_handle_ipv4` — MAC-based forwarding + flow rule installation
-- `launch()` — POX entry point
-
-**`topology/topology.py`**  
-Mininet script that creates the 4-host single-switch topology.
-Supports interactive CLI mode and automated `--test` mode.
-
-**`tests/test_arp_handler.py`**  
-10 unit tests covering: ARP learning, Proxy ARP, flood suppression,
-table snapshots, connection setup. Runs without Mininet or POX installed.
-
----
-
-## Requirements
-
-### System requirements
-
-| Component | Version | Purpose |
-|---|---|---|
-| Ubuntu | 20.04 or 22.04 LTS | Operating system |
-| Python | 3.6 – 3.12 | Runtime (3.8 recommended) |
-| Mininet | 2.3.0+ | Network emulator |
-| Open vSwitch | 2.13+ | OpenFlow-capable virtual switch |
-| POX | 0.7.0 (gar) | SDN Controller |
-| iperf | 2.x | Bandwidth measurement |
-| Wireshark / tshark | any | Packet capture |
-| arping | any | Raw ARP testing |
-
-### Python packages (for tests only)
-
-| Package | Purpose |
-|---|---|
-| `unittest` | Built-in test framework (no install needed) |
-| `unittest2` | Optional: compatibility backport |
-
----
-
-## Installation
-
-### Step 1 — Update system packages
+## ⬇️ Installing Dependencies
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-```
-
-### Step 2 — Install all system dependencies
-
-```bash
+sudo apt update
 sudo apt install -y \
     mininet \
     openvswitch-switch \
@@ -171,58 +63,241 @@ sudo apt install -y \
     python3 \
     python3-pip
 ```
+- `mininet` — network emulator that creates virtual hosts, switches, and links
+- `openvswitch-switch` — OpenFlow-capable virtual switch with `ovs-ofctl` tools
+- `iperf` — TCP/UDP bandwidth measurement between hosts
+- `wireshark` / `tshark` — packet capture and protocol analysis
+- `arping` — sends raw ARP packets for targeted ARP testing
+- `git` — needed to clone the POX controller repository
 
-### Step 3 — Install POX controller
+**Install the POX controller (not available via pip — must be cloned):**
 
 ```bash
 git clone https://github.com/noxrepo/pox.git ~/pox
 ```
 
-Verify POX installed correctly:
+**Verify everything installed correctly:**
+
 ```bash
+sudo mn --version
+sudo ovs-vsctl --version
+python3 --version
 ls ~/pox/pox.py
-# Should print: /home/<username>/pox/pox.py
+iperf --version
+which tshark
+```
+The above dependencies could be easily installed by simply running the <code>setup.sh</code> file attached within this repository
+
+---
+
+## 📁 Project Structure
+
+```
+CN-SDN/
+├── controller/
+│   └── arp_handler.py          # POX controller — all ARP + forwarding logic
+├── topology/
+│   └── topology.py             # Mininet topology builder + automated test runner
+├── tests/
+│   └── test_arp_handler.py     # 10 unit/regression tests (no Mininet needed)
+├── requirements.txt            # Dependency list with install instructions
+└── README.md                   # This file
 ```
 
-### Step 4 — Clone this project
+### File Descriptions
+
+**`controller/arp_handler.py`** — The heart of the SDN control plane. When loaded
+by POX, it registers as a component and listens for OpenFlow events. It contains
+the `ARPHandler` class with all ARP interception, Proxy ARP, host discovery, and
+flow rule installation logic.
+
+**`topology/topology.py`** — Mininet script that creates the 4-host single-switch
+topology and connects it to the POX controller. Supports both an interactive CLI
+mode and an automated `--test` mode that runs all scenarios and exits.
+
+**`tests/test_arp_handler.py`** — 10 unit tests that verify ARP learning, Proxy
+ARP behaviour, flood suppression, table snapshots, and switch connection setup.
+Runs entirely without Mininet or POX installed using lightweight stubs.
+
+---
+
+## 🧠 Architecture
+
+The system is designed around **two separate communication paths** — one for
+OpenFlow control messages between the controller and switch, and one for data
+traffic between hosts — to keep concerns cleanly separated.
+
+```
+Mininet CLI (user commands)
+     │
+     │  host traffic triggers packet_in
+     ▼
+OVS Switch (s1)                              ← OpenFlow 1.0 software switch
+ ├── Flow Table (priority 0: table-miss → CONTROLLER)
+ ├── Flow Table (priority 1: dl_dst=MAC → output:port)
+ └── Ports: h1(1)  h2(2)  h3(3)  h4(4)
+     │
+     │  OpenFlow 1.0 over TCP port 6633
+     ▼
+POX Controller (arp_handler.py)              ← runs as: python3 pox.py log.level --DEBUG arp_handler
+ ├── ARP Table  { IP → (MAC, dpid, port) }
+ ├── MAC Table  { dpid → { MAC → port } }
+ ├── _handle_ConnectionUp  → installs table-miss rule
+ ├── _handle_PacketIn      → dispatches by EtherType
+ ├── _handle_arp           → learn / proxy-reply / flood
+ ├── _send_arp_reply       → crafts synthetic ARP Reply
+ └── _handle_ipv4          → forward + install flow rule
+```
+
+### Why Proxy ARP instead of simple flooding?
+
+**Simple flood (traditional):** Every ARP Request is broadcast to all hosts on
+the network. All hosts receive and process it even if they are not the target.
+Wastes bandwidth, scales poorly.
+
+**Proxy ARP (this project):** The controller intercepts the ARP Request. If the
+target IP is already in the ARP table, the controller crafts and sends an ARP
+Reply directly — no broadcast ever reaches the network. This is visible in the
+logs as `[ARP FLOOD]` on the first request and `[PROXY ARP]` on every
+subsequent request for the same target.
+
+---
+
+## 🔄 System Working
+
+### 1. Switch Connection
+
+When Mininet starts and the OVS switch connects to the POX controller, the
+`_handle_ConnectionUp` event fires:
+
+- Installs a **table-miss rule** (priority 0, empty match) with action `OFPP_CONTROLLER`
+- This ensures every packet with no matching flow rule is sent to the controller
+- Initialises the MAC-to-port table for this switch datapath
+
+```
+[SWITCH 00-00-00-00-00-01]  connected — installing table-miss rule
+```
+
+
+### 2. ARP Request — First Time (Flood + Learn)
+
+When h1 sends its first ARP Request asking "Who has 10.0.0.2?":
+
+```
+h1 ──ARP Request──► s1 ──packet_in──► POX Controller
+                                            │
+                                   [ARP LEARN] 10.0.0.1 → port 1
+                                   10.0.0.2 not in table
+                                   [ARP FLOOD] → OFPP_FLOOD
+                                            │
+                         s1 floods to h2, h3, h4 ◄──────────┘
+                                            │
+                    h2 sends ARP Reply ─────►s1 ──packet_in──► POX
+                                                                 │
+                                                      [ARP LEARN] 10.0.0.2 → port 2
+                                                      [ARP FWD]  → output port 1
+                                                                 │
+                    h1 ◄──ARP Reply──────── s1 ◄──packet_out────┘
+```
+
+
+### 3. ARP Request — Repeat (Proxy ARP — No Flood)
+
+When h1 sends another ARP Request for the same target:
+
+```
+h1 ──ARP Request──► s1 ──packet_in──► POX Controller
+                                            │
+                                   10.0.0.2 IS in ARP table
+                                   [PROXY ARP] crafts ARP Reply
+                                   target_mac = 00:00:00:00:00:02
+                                            │
+                    h1 ◄──ARP Reply──────── s1 ◄──packet_out────┘
+
+No broadcast. No other host is involved.
+```
+
+
+### 4. IPv4 Forwarding + Flow Rule Installation
+
+After ARP resolves and h1 sends an ICMP ping to h2:
+
+- Controller receives the IP packet via `packet_in`
+- Looks up `dst_mac` in the MAC table → finds port 2
+- Installs a flow rule: `match dl_dst=00:00:00:00:00:02 → output:2`
+- All subsequent packets to h2 are forwarded by the **switch hardware directly**
+  without involving the controller at all
+
+```
+Flow rule installed:
+  priority=1, idle_timeout=30s, hard_timeout=120s
+  match:  dl_dst = 00:00:00:00:00:02
+  action: output:2
+```
+
+
+### 5. Host Discovery
+
+Every time the controller sees an ARP packet from a host, it records:
+
+```python
+arp_table[src_ip] = (src_mac, dpid, in_port)
+```
+
+This means after the first ping between any two hosts, both hosts are
+permanently known to the controller. All future ARP Requests targeting
+either host are answered instantly via Proxy ARP without any network traffic.
+
+---
+
+## 🛠️ Build / Setup Instructions
+
+### Step 1 — Clone this project
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/arp-sdn-project.git ~/Documents/CN-SDN
+git clone https://github.com/YOUR_USERNAME/CN-SDN.git ~/Documents/CN-SDN
 cd ~/Documents/CN-SDN
 ```
 
-### Step 5 — Install Python dependencies (for tests)
+### Step 2 — Install dependencies
 
 ```bash
-pip3 install -r requirements.txt
+sudo apt update
+sudo apt install -y mininet openvswitch-switch iperf wireshark tshark arping git python3
+git clone https://github.com/noxrepo/pox.git ~/pox
 ```
 
-### Step 6 — Copy controller into POX directory
+### Step 3 — Copy the controller into POX
 
 ```bash
 cp ~/Documents/CN-SDN/controller/arp_handler.py ~/pox/arp_handler.py
 ```
 
 Verify:
+
 ```bash
 ls ~/pox/arp_handler.py
-# Should print: /home/<username>/pox/arp_handler.py
 ```
 
-### Step 7 — Verify everything is ready
+### Step 4 — Install Python test dependencies (optional)
 
 ```bash
-sudo mn --version          # Mininet version
-sudo ovs-vsctl --version   # Open vSwitch version
-python3 --version          # Python version
-ls ~/pox/pox.py            # POX exists
-ls ~/pox/arp_handler.py    # Controller copied
-iperf --version            # iperf available
+pip3 install -r requirements.txt
+```
+
+### Step 5 — Verify everything is ready
+
+```bash
+sudo mn --version           # Mininet installed
+sudo ovs-vsctl --version    # OVS installed
+python3 --version           # Python available
+ls ~/pox/pox.py             # POX exists
+ls ~/pox/arp_handler.py     # Controller copied
 ```
 
 ---
 
-## Steps to Run
+## 🚀 Steps to Run
 
 > **Always follow this order: clean → POX first → Mininet second**
 
@@ -233,8 +308,6 @@ sudo mn -c
 sudo fuser -k 6633/tcp 2>/dev/null
 ```
 
----
-
 ### Terminal 1 — Start the POX Controller
 
 ```bash
@@ -242,7 +315,8 @@ cd ~/pox
 python3 pox.py log.level --DEBUG arp_handler
 ```
 
-Wait until you see this before moving to Terminal 2:
+Wait until you see:
+
 ```
 INFO:arp_handler:============================================================
 INFO:arp_handler:  ARP Handling SDN Controller (POX)  —  started
@@ -254,59 +328,38 @@ DEBUG:openflow.of_01:Listening on 0.0.0.0:6633
 
 **Do not close Terminal 1.**
 
----
-
 ### Terminal 2 — Start the Mininet Topology
-
-Open a new terminal (Ctrl + Alt + T):
 
 ```bash
 cd ~/Documents/CN-SDN
 sudo python3 topology/topology.py
 ```
 
-Wait for the prompt:
+Wait for:
+
 ```
 *** Network ready.
 mininet>
 ```
 
-At this point, check Terminal 1 — you should see:
+Check Terminal 1 — you should now see:
+
 ```
 INFO:openflow.of_01:[00-00-00-00-00-01 1] connected
 INFO:arp_handler:[SWITCH 00-00-00-00-00-01]  connected — installing table-miss rule
 ```
 
----
-
-### Terminal 3 (Optional) — Check flow table in real time
-
-Open a third terminal and run:
+### Terminal 3 (optional) — Watch flow table in real time
 
 ```bash
-# Watch flow table update live
 watch -n 1 sudo ovs-ofctl dump-flows s1
 ```
 
 ---
 
-### Run all tests automatically
+## 🖥️ CLI Commands
 
-Instead of the interactive CLI, you can run all test scenarios automatically:
-
-```bash
-# Stop any running Mininet session first
-# Then in Terminal 2:
-sudo python3 topology/topology.py --test
-```
-
----
-
-## Mininet CLI Commands
-
-Once `mininet>` prompt appears, run these commands:
-
-### Ping commands
+All commands are run from the `mininet>` prompt unless stated otherwise.
 
 ```bash
 # First ping — triggers ARP flood and controller learning
@@ -315,65 +368,50 @@ mininet> h1 ping -c 5 h2
 # Second ping — controller answers ARP directly (Proxy ARP, no flood)
 mininet> h1 ping -c 5 h2
 
-# Other host pairs
+# Ping other pairs
 mininet> h3 ping -c 5 h4
 mininet> h1 ping -c 5 h4
 
-# Full connectivity matrix (all pairs)
+# Full connectivity matrix (all 6 host pairs)
 mininet> pingall
-```
 
-### Flow table commands
-
-```bash
-# View installed flow rules (run from OUTSIDE Mininet, in a new terminal)
+# View flow rules installed by the controller (run OUTSIDE Mininet)
 sudo ovs-ofctl dump-flows s1
 
-# Port statistics (packet/byte counts per port)
+# Port statistics (packet and byte counts per port)
 sudo ovs-ofctl dump-ports s1
 
-# Show OVS bridge configuration
-sudo ovs-vsctl show
-```
-
-### iperf throughput commands
-
-```bash
-# TCP test — h1 server, h2 client, 10 seconds
+# TCP throughput test
 mininet> h1 iperf -s &
 mininet> h2 iperf -c 10.0.0.1 -t 10
 
-# UDP test — h3 server, h4 client, 5 Mbps offered load
+# UDP throughput test
 mininet> h3 iperf -s -u &
 mininet> h4 iperf -c 10.0.0.3 -u -b 5M -t 10
-```
 
-### ARP specific commands
-
-```bash
-# Send raw ARP requests (useful with Wireshark)
+# Send raw ARP packets (useful with Wireshark)
 mininet> h1 arping -c 4 10.0.0.2
 
-# Show ARP cache on h1
+# Show ARP cache on a host
 mininet> h1 arp -n
+
+# Exit Mininet
+mininet> exit
+sudo mn -c
 ```
 
-### Wireshark / tshark capture
-
-Open a new terminal while Mininet is running:
+### Wireshark capture commands
 
 ```bash
-# Capture ARP packets on h1's interface
+# Capture ARP packets on switch port 1 (h1's interface)
 sudo tshark -i s1-eth1 -f "arp" -V
-
-# Capture all traffic on switch port 1
-sudo tshark -i s1-eth1
 
 # Launch Wireshark GUI on switch port 2
 sudo wireshark -i s1-eth2 &
 ```
 
 Wireshark display filters:
+
 ```
 arp                  — all ARP packets
 arp.opcode == 1      — ARP Requests only
@@ -382,9 +420,66 @@ icmp                 — ping traffic only
 ip.src == 10.0.0.1   — traffic from h1 only
 ```
 
-### Exit Mininet
+---
 
-```bash
-mininet> exit
-sudo mn -c
-```
+
+## 🎓 Conclusion
+
+This project demonstrates ARP handling in an SDN environment using OpenFlow
+primitives:
+
+**Centralised ARP management** — instead of broadcasting ARP to every host,
+the controller intercepts all ARP traffic and answers from its own table.
+This eliminates flood traffic after the first host discovery and scales
+better than traditional broadcast-based ARP.
+
+**Packet-in event handling** — every ARP and unmatched IP packet is
+processed in the controller's `_handle_PacketIn` method, which dispatches
+by EtherType. This is the core pattern for all reactive SDN controllers.
+
+**Match-action flow rule design** — after ARP resolves, a flow rule is
+installed in the switch matching `dl_dst` (destination MAC) with action
+`output:port`. The switch handles all subsequent packets without controller
+involvement — this is the efficiency advantage of proactive flow installation.
+
+**Host discovery** — the ARP table is built automatically from observed
+traffic. No static configuration is needed. Any host that sends or receives
+an ARP packet is immediately known to the controller.
+
+Together, these mechanisms demonstrate the control plane / data plane
+separation that is the defining characteristic of Software Defined Networking.
+
+---
+
+## 👨‍💻 Author
+
+**Praveen Balaji P**
+
+---
+
+## 📌 Notes
+
+- Always start **POX first**, then Mininet. POX must be listening on port 6633
+  before the OVS switch tries to connect.
+- Always run `sudo mn -c` before starting a new Mininet session to clean up
+  any leftover virtual interfaces or processes from previous runs.
+- The `arp_handler.py` file must be copied directly into `~/pox/` (not into
+  a subdirectory). POX discovers components by looking in its own root
+  directory. The launch command is `python3 pox.py log.level --DEBUG arp_handler`
+  with **no** `ext.` prefix.
+- `autoStaticArp=False` is set in `topology.py` intentionally. If this is
+  set to `True`, Mininet pre-populates ARP tables and the controller never
+  sees any ARP traffic — defeating the entire purpose of the project.
+- The first ping between any two hosts will always lose 1–2 packets while
+  ARP is being resolved. Use `ping -c 5` instead of `-c 3` to avoid
+  misleading 66% loss statistics in screenshots.
+
+---
+
+## 📚 References
+
+
+1. POX Controller Documentation — https://noxrepo.github.io/pox-doc/html/
+2. POX GitHub Repository — https://github.com/noxrepo/pox
+3. Mininet Official Walkthrough — http://mininet.org/walkthrough/
+4. Open vSwitch Documentation — https://docs.openvswitch.org/en/latest/
