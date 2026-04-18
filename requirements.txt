@@ -1,0 +1,10 @@
+# SDN ARP Handling Project - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core SDN / networking libraries
+ryu>=4.34 # if ryu is used instead of POX (POX is directly cloned from repo, follow instructons in README.txt to do the same)
+eventlet>=0.33.0
+netaddr>=0.8.0
+
+# Testing support
+unittest2>=1.1.0
