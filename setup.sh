@@ -3,6 +3,11 @@
 # SDN ARP Project Setup Script
 # Installs Mininet + Open vSwitch + tools + POX
 
+# HOW TO RUN setup.sh file
+# Run chmod +x setup.sh
+# Run ./setup.sh
+# The core dependencies alongwith POX cloning from repo happens automatically in one-shot
+
 echo "🔄 Updating system packages..."
 sudo apt update
 
