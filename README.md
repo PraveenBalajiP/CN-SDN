@@ -422,6 +422,59 @@ ip.src == 10.0.0.1   — traffic from h1 only
 
 ---
 
+## 📸 Output Screenshots
+
+### Screenshot 1
+
+![Screenshot 1](images/1.png)
+
+Caption: Screenshot showing start of POX controller
+
+
+### Screenshot 2
+
+![Screenshot 2](images/2.png)
+
+Caption:  Screenshot showing building of topology (4 hosts, 1 controller) by mininet emulator
+
+
+### Screenshot 3
+
+![Screenshot 3](images/3.png)
+
+Caption: Screenshot showing Host 1 initially sending an ARP request and receiving an ARP response with destination's MAC address after flooding done by the switch, the POX controller also displays how the arp table is updated using ARP LEARN and ARP REPLY
+
+
+### Screenshot 4
+
+![Screenshot 4](images/6.png)
+
+Caption: Wireshark screenshot showing sending and receival of ARP requests and response respectively
+
+
+### Screenshot 5
+
+![Screenshot 5](images/4.png)
+
+Caption: Screenshot showing updation of ARP table in switch after initial trying of pinging two hosts
+
+
+### Screenshot 6
+
+![Screenshot 6](images/5.png)
+
+Caption: Screenshot showing working of proxy ARP reply sent to source host h1 directly from switch via information from ARP table instead of flooding
+
+
+### Screenshot 7
+
+![Screenshot 7](images/7.png)
+
+Caption: Wireshark screenshot showing receival of proxy ARP reply directly from switch to source host h1
+
+
+---
+
 
 ## 🎓 Conclusion
 
