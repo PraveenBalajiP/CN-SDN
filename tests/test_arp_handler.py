@@ -1,48 +1,15 @@
 """
-test_arp_handler.py  —  Unit / Regression Tests for POX ARP Controller
-========================================================================
 Tests ALL controller logic without needing a live Mininet or POX instance.
 Uses lightweight stubs that replicate just enough of the POX API surface.
-
-Run:
-    python3 tests/test_arp_handler.py
-
-Expected result:
-    Ran 10 tests in X.XXXs  OK
 """
-
 import sys
 import os
 import types
 import unittest
 from unittest.mock import MagicMock, patch, call
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  POX stubs
-#  Must be installed BEFORE importing arp_handler.
-#
-#  POX import tree used by the controller:
-#    from pox.core import core
-#    import pox.openflow.libopenflow_01 as of
-#    from pox.lib.packet import ethernet, arp, ipv4
-#    from pox.lib.packet.ethernet import ethernet as eth_type
-#    from pox.lib.addresses import IPAddr, EthAddr
-#    from pox.lib.util import dpid_to_str
-#
-#  Critical rule (same as the Ryu version):
-#    When the controller does  'from pox.lib.packet import arp',
-#    Python resolves 'arp' as an ATTRIBUTE of sys.modules['pox.lib.packet'].
-#    If that module is a plain MagicMock, .arp gives a child Mock whose
-#    constants (.REQUEST, .REPLY) are also Mocks — so opcode == arp.REQUEST
-#    is always False.
-#    Fix: make every module that carries integer/string constants a real
-#    types.ModuleType, and wire it as an attribute of its parent module.
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _install_pox_stubs():
-
-    # ── IPAddr / EthAddr  ─────────────────────────────────────────────────
+    # IPAddr / EthAddr
     # Use real wrapper classes so equality comparisons work correctly.
     class IPAddr(str):
         """Minimal IPAddr — just a string subclass for our tests."""
@@ -52,17 +19,14 @@ def _install_pox_stubs():
         """Minimal EthAddr — just a string subclass for our tests."""
         def __new__(cls, v):
             return str.__new__(cls, str(v).lower())
-
-    # ── pox.lib.addresses ────────────────────────────────────────────────
+    # pox.lib.addresses
     addresses_mod = types.ModuleType('pox.lib.addresses')
     addresses_mod.IPAddr  = IPAddr
     addresses_mod.EthAddr = EthAddr
-
-    # ── pox.lib.util ──────────────────────────────────────────────────────
+    # pox.lib.util
     util_mod = types.ModuleType('pox.lib.util')
     util_mod.dpid_to_str = lambda dpid: '%016x' % (dpid or 0)
-
-    # ── pox.lib.packet.arp ───────────────────────────────────────────────
+    # pox.lib.packet.arp
     arp_mod           = types.ModuleType('pox.lib.packet.arp')
     arp_mod.REQUEST   = 1
     arp_mod.REPLY     = 2
